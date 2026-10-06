@@ -55,23 +55,51 @@ export async function cloneRepository(url, destination) {
   }
 }
 
-async function normaliseAuthor(repoPath, name, email) {
-  const identity = `${name} <${email}>`;
-  try {
-    const mapped = await runGit(repoPath, ['check-mailmap', identity]);
-    return mapped.trim() || identity;
-  } catch {
-    return identity;
+function parseManualAuthorMerges(value = '') {
+  const manualMap = new Map();
+  for (const rawLine of value.split('\n')) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+
+    const separator = line.includes('=>') ? '=>' : line.includes('=') ? '=' : line.includes(':') ? ':' : null;
+    if (!separator) continue;
+
+    const [canonicalRaw, aliasesRaw] = line.split(separator, 2);
+    const canonical = canonicalRaw.trim();
+    if (!canonical || !aliasesRaw) continue;
+
+    manualMap.set(canonical, canonical);
+    for (const alias of aliasesRaw.split(',')) {
+      const cleanedAlias = alias.trim();
+      if (cleanedAlias) manualMap.set(cleanedAlias, canonical);
+    }
   }
+  return manualMap;
 }
 
-async function parseCommits(repoPath) {
+async function normaliseAuthor(repoPath, name, email, manualAuthorMap) {
+  const identity = `${name} <${email}>`;
+  let mapped = identity;
+  try {
+    mapped = (await runGit(repoPath, ['check-mailmap', identity])).trim() || identity;
+  } catch {
+    mapped = identity;
+  }
+  return manualAuthorMap.get(mapped) || mapped;
+}
+
+async function resolveReference(repoPath, reference = '') {
+  const requestedReference = reference.trim() || 'HEAD';
+  return (await runGit(repoPath, ['rev-parse', '--verify', `${requestedReference}^{commit}`])).trim();
+}
+
+async function parseCommits(repoPath, reference, manualAuthorMap) {
   const raw = await runGit(repoPath, [
     'log',
     '--no-merges',
     '--reverse',
     '--format=%H%x1f%an%x1f%ae%x1f%ct%x1f%s%x1e',
-    'HEAD'
+    reference
   ]);
   const commits = [];
   for (const record of raw.split('\x1e')) {
@@ -82,7 +110,7 @@ async function parseCommits(repoPath) {
     const [sha, name, email, timestamp, subject] = parts;
     commits.push({
       sha,
-      author: await normaliseAuthor(repoPath, name, email),
+      author: await normaliseAuthor(repoPath, name, email, manualAuthorMap),
       email,
       timestamp: Number(timestamp),
       subject
@@ -133,6 +161,27 @@ async function parseNumstat(repoPath, sha) {
   return changes;
 }
 
+async function listFilesAtReference(repoPath, reference) {
+  try {
+    const raw = await runGit(repoPath, ['grep', '-I', '-l', '-e', '', reference, '--']);
+    return raw
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => line.replace(`${reference}:`, ''));
+  } catch {
+    return [];
+  }
+}
+
+async function previousCommit(repoPath, sha) {
+  try {
+    return (await runGit(repoPath, ['rev-parse', '--verify', `${sha}^`])).trim();
+  } catch {
+    return '';
+  }
+}
+
 function parseDate(value) {
   if (!value) return null;
   const timestamp = Date.parse(`${value}T00:00:00Z`);
@@ -153,8 +202,9 @@ function filterCommits(commits, filters) {
   });
 }
 
-function emptyMetrics() {
+function emptyMetrics(type) {
   return {
+    type,
     added: 0,
     removed: 0,
     growth: 0,
@@ -169,25 +219,55 @@ function authorBucket() {
   return { churn: 0, modifications: 0 };
 }
 
+function ensureMetric(objectMetrics, objectPath, type) {
+  if (!objectMetrics.has(objectPath)) objectMetrics.set(objectPath, emptyMetrics(type));
+  const metric = objectMetrics.get(objectPath);
+  metric.type = metric.type || type;
+  return metric;
+}
+
+function ensureAuthorMetric(objectAuthors, objectPath, author) {
+  if (!objectAuthors.has(objectPath)) objectAuthors.set(objectPath, new Map());
+  const authorMap = objectAuthors.get(objectPath);
+  if (!authorMap.has(author)) authorMap.set(author, authorBucket());
+  return authorMap.get(author);
+}
+
+function addObjectPath(objectMetrics, filePath) {
+  ensureMetric(objectMetrics, filePath, 'file');
+  for (const directory of parentDirs(filePath)) {
+    ensureMetric(objectMetrics, directory, 'directory');
+  }
+}
+
+async function addCommitSetObjects(repoPath, commits, objectMetrics) {
+  const seenReferences = new Set();
+  for (const commit of commits) {
+    const references = [commit.sha];
+    const parent = await previousCommit(repoPath, commit.sha);
+    if (parent) references.push(parent);
+
+    for (const reference of references) {
+      if (seenReferences.has(reference)) continue;
+      seenReferences.add(reference);
+      const files = await listFilesAtReference(repoPath, reference);
+      for (const filePath of files) addObjectPath(objectMetrics, filePath);
+    }
+  }
+  ensureMetric(objectMetrics, '.', 'directory');
+}
+
 export async function analyzeRepository(repoPath, filters = {}) {
-  const allCommits = await parseCommits(repoPath);
+  const manualAuthorMap = parseManualAuthorMerges(filters.authorMerges || '');
+  const reference = await resolveReference(repoPath, filters.reference || 'HEAD');
+  const allCommits = await parseCommits(repoPath, reference, manualAuthorMap);
   const commits = filterCommits(allCommits, filters);
   const objectMetrics = new Map();
   const objectAuthors = new Map();
   const authors = [...new Set(allCommits.map((commit) => commit.author))].sort();
   const commitRows = [];
 
-  function metricFor(objectPath) {
-    if (!objectMetrics.has(objectPath)) objectMetrics.set(objectPath, emptyMetrics());
-    return objectMetrics.get(objectPath);
-  }
-
-  function authorMetricFor(objectPath, author) {
-    if (!objectAuthors.has(objectPath)) objectAuthors.set(objectPath, new Map());
-    const authorMap = objectAuthors.get(objectPath);
-    if (!authorMap.has(author)) authorMap.set(author, authorBucket());
-    return authorMap.get(author);
-  }
+  await addCommitSetObjects(repoPath, commits, objectMetrics);
 
   for (const commit of commits) {
     const changes = await parseNumstat(repoPath, commit.sha);
@@ -196,29 +276,29 @@ export async function analyzeRepository(repoPath, filters = {}) {
     let commitRemoved = 0;
 
     for (const change of changes) {
+      const changeChurn = change.added + change.removed;
       const affected = [
         { path: change.path, type: 'file' },
         ...parentDirs(change.path).map((dir) => ({ path: dir, type: 'directory' }))
       ];
       for (const object of affected) {
-        const metric = metricFor(object.path);
-        metric.type = object.type;
+        const metric = ensureMetric(objectMetrics, object.path, object.type);
         metric.added += change.added;
         metric.removed += change.removed;
         metric.growth += change.added - change.removed;
-        metric.churn += change.added + change.removed;
-        touchedObjects.add(object.path);
+        metric.churn += changeChurn;
 
-        const authorMetric = authorMetricFor(object.path, commit.author);
-        authorMetric.churn += change.added + change.removed;
+        const authorMetric = ensureAuthorMetric(objectAuthors, object.path, commit.author);
+        authorMetric.churn += changeChurn;
+        if (changeChurn > 0) touchedObjects.add(object.path);
       }
       commitAdded += change.added;
       commitRemoved += change.removed;
     }
 
     for (const objectPath of touchedObjects) {
-      metricFor(objectPath).modifications += 1;
-      authorMetricFor(objectPath, commit.author).modifications += 1;
+      ensureMetric(objectMetrics, objectPath, objectMetrics.get(objectPath)?.type || 'file').modifications += 1;
+      ensureAuthorMetric(objectAuthors, objectPath, commit.author).modifications += 1;
     }
 
     commitRows.push({
@@ -265,11 +345,12 @@ export async function analyzeRepository(repoPath, filters = {}) {
     return left.path.localeCompare(right.path);
   });
 
-  const repoMetrics = objectMetrics.get('.') || emptyMetrics();
+  const repoMetrics = objectMetrics.get('.') || emptyMetrics('directory');
   repoMetrics.modificationFrequency = commitCount ? repoMetrics.modifications / commitCount : 0;
   repoMetrics.churnRate = commitCount ? repoMetrics.churn / commitCount : 0;
 
   return {
+    reference,
     authors,
     commitCount,
     allCommitCount: allCommits.length,

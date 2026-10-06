@@ -67,7 +67,9 @@ app.get('/api/repos/:repo/analysis', async (request, response) => {
       path: String(request.query.path || ''),
       since: String(request.query.since || ''),
       until: String(request.query.until || ''),
-      commits: String(request.query.commits || '')
+      commits: String(request.query.commits || ''),
+      reference: String(request.query.reference || ''),
+      authorMerges: String(request.query.authorMerges || '')
     });
     response.json(analysis);
   } catch (error) {
