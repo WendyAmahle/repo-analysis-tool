@@ -33,32 +33,42 @@ Not yet implemented:
 
 The full assignment feature list is in [docs/requirements.md](docs/requirements.md).
 
-## Run locally
+## Clone and run locally
 
-Install dependencies:
-
-```bash
-npm install
-npm run install:all
-```
-
-Start both the backend API and frontend dashboard:
+This is a public repository. Clone it over HTTPS without an SSH key, GitHub account, password, or personal access token:
 
 ```bash
-npm run dev
+git clone https://github.com/WendyAmahle/repo-analysis-tool.git
+cd repo-analysis-tool
 ```
 
-Then open:
+### Recommended: start script
+
+The start script checks for Git, Node.js, and npm, installs missing project dependencies, and starts both servers:
+
+```bash
+./start.sh
+```
+
+Then open the dashboard in a browser:
 
 ```text
 http://127.0.0.1:5173
 ```
 
-The backend API runs on:
+Press `Ctrl+C` in the terminal to stop the app.
 
-```text
-http://127.0.0.1:3001
+### Manual npm commands
+
+The equivalent commands are:
+
+```bash
+npm install
+npm run install:all
+npm run dev
 ```
+
+The frontend runs at `http://127.0.0.1:5173`. The backend API runs at `http://127.0.0.1:3001`.
 
 ## Build
 
