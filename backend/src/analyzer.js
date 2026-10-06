@@ -1,7 +1,10 @@
 import { execFile } from 'node:child_process';
-import { mkdir, readdir, rm } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
+import { access, mkdir, mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
+import yauzl from 'yauzl';
 
 const execFileAsync = promisify(execFile);
 
@@ -52,6 +55,158 @@ export async function cloneRepository(url, destination) {
     await rm(destination, { recursive: true, force: true });
     const message = error.stderr?.trim() || error.message || 'Unable to clone repository.';
     throw new GitAnalysisError(message);
+  }
+}
+
+async function pathExists(target) {
+  try {
+    await access(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function safeZipEntryPath(entryName) {
+  const normalized = entryName.replaceAll('\\', '/');
+  if (normalized.startsWith('/') || /^[A-Za-z]:/.test(normalized)) {
+    throw new GitAnalysisError('ZIP archive contains an unsafe absolute path.');
+  }
+  const parts = normalized.split('/').filter((part) => part && part !== '.');
+  if (!parts.length || parts.includes('..')) {
+    throw new GitAnalysisError('ZIP archive contains an unsafe path.');
+  }
+  return parts.join('/');
+}
+
+function openZip(buffer) {
+  return new Promise((resolve, reject) => {
+    yauzl.fromBuffer(buffer, { lazyEntries: true, validateEntrySizes: true }, (error, zipFile) => {
+      if (error) reject(error);
+      else resolve(zipFile);
+    });
+  });
+}
+
+function openZipEntry(zipFile, entry) {
+  return new Promise((resolve, reject) => {
+    zipFile.openReadStream(entry, (error, stream) => {
+      if (error) reject(error);
+      else resolve(stream);
+    });
+  });
+}
+
+async function extractZip(buffer, targetDirectory) {
+  const zipFile = await openZip(buffer);
+  const seenPaths = new Set();
+  let entryCount = 0;
+  let totalSize = 0;
+
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      zipFile.close();
+      if (error) reject(error);
+      else resolve();
+    };
+
+    zipFile.on('error', finish);
+    zipFile.on('end', () => finish());
+    zipFile.on('entry', async (entry) => {
+      try {
+        entryCount += 1;
+        totalSize += entry.uncompressedSize;
+        if (entryCount > 10000 || totalSize > 512 * 1024 * 1024 || entry.uncompressedSize > 128 * 1024 * 1024) {
+          throw new GitAnalysisError('ZIP archive exceeds the extraction safety limits.');
+        }
+        if (entry.generalPurposeBitFlag & 0x1) {
+          throw new GitAnalysisError('Encrypted ZIP archives are not supported.');
+        }
+
+        const relativePath = safeZipEntryPath(entry.fileName);
+        if (seenPaths.has(relativePath)) {
+          throw new GitAnalysisError('ZIP archive contains duplicate paths.');
+        }
+        seenPaths.add(relativePath);
+
+        const unixMode = (entry.externalFileAttributes >>> 16) & 0xffff;
+        const fileType = unixMode & 0o170000;
+        if (fileType === 0o120000 || (fileType && ![0o040000, 0o100000].includes(fileType))) {
+          throw new GitAnalysisError('ZIP archive contains an unsupported special file.');
+        }
+
+        const destination = path.resolve(targetDirectory, relativePath);
+        if (!destination.startsWith(`${path.resolve(targetDirectory)}${path.sep}`)) {
+          throw new GitAnalysisError('ZIP archive contains an unsafe path.');
+        }
+
+        if (entry.fileName.endsWith('/')) {
+          await mkdir(destination, { recursive: true });
+        } else {
+          await mkdir(path.dirname(destination), { recursive: true });
+          const stream = await openZipEntry(zipFile, entry);
+          await pipeline(stream, createWriteStream(destination, { flags: 'wx', mode: 0o600 }));
+        }
+        zipFile.readEntry();
+      } catch (error) {
+        finish(error);
+      }
+    });
+
+    zipFile.readEntry();
+  });
+}
+
+async function isDirectory(target) {
+  try {
+    return (await stat(target)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+async function findExtractedRepository(extractionDirectory) {
+  const candidates = [];
+  if (await isDirectory(path.join(extractionDirectory, '.git'))) {
+    candidates.push(extractionDirectory);
+  }
+  for (const entry of await readdir(extractionDirectory, { withFileTypes: true })) {
+    if (entry.isDirectory() && await isDirectory(path.join(extractionDirectory, entry.name, '.git'))) {
+      candidates.push(path.join(extractionDirectory, entry.name));
+    }
+  }
+  if (candidates.length !== 1) {
+    throw new GitAnalysisError('ZIP must contain exactly one Git repository, at its root or in one top-level folder.');
+  }
+  return candidates[0];
+}
+
+export async function importRepositoryZip(buffer, destination) {
+  await mkdir(path.dirname(destination), { recursive: true });
+  if (await pathExists(destination)) {
+    throw new GitAnalysisError('A repository with this name already exists.');
+  }
+
+  const extractionDirectory = await mkdtemp(path.join(path.dirname(destination), '.upload-'));
+  let moved = false;
+  try {
+    await extractZip(buffer, extractionDirectory);
+    const repositoryRoot = await findExtractedRepository(extractionDirectory);
+    const insideWorkTree = (await runGit(repositoryRoot, ['rev-parse', '--is-inside-work-tree'])).trim();
+    if (insideWorkTree !== 'true') {
+      throw new GitAnalysisError('The uploaded archive does not contain a valid Git working tree.');
+    }
+    await rename(repositoryRoot, destination);
+    moved = true;
+  } catch (error) {
+    if (moved) await rm(destination, { recursive: true, force: true });
+    if (error instanceof GitAnalysisError) throw error;
+    throw new GitAnalysisError(error.message || 'Unable to extract ZIP repository.');
+  } finally {
+    await rm(extractionDirectory, { recursive: true, force: true });
   }
 }
 

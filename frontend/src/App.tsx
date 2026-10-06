@@ -104,6 +104,8 @@ function App() {
   const [filters, setFilters] = useState<Filters>(emptyFilters);
   const [cloneUrl, setCloneUrl] = useState('');
   const [cloneName, setCloneName] = useState('');
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadName, setUploadName] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -175,6 +177,34 @@ function App() {
     }
   }
 
+  async function handleUpload(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!uploadFile) return;
+    const form = event.currentTarget;
+
+    setLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      const formData = new FormData();
+      formData.set('archive', uploadFile);
+      if (uploadName.trim()) formData.set('name', uploadName.trim());
+      const data = await fetchJson<{ repo: string }>('/api/repos/upload', {
+        method: 'POST',
+        body: formData
+      });
+      setUploadFile(null);
+      setUploadName('');
+      form.reset();
+      setMessage(`Uploaded ${data.repo}.`);
+      await loadRepos(data.repo);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to upload repository.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function handleFilterSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     loadAnalysis();
@@ -191,6 +221,7 @@ function App() {
 
         <section className="card">
           <h2>Add repository</h2>
+          <h3>Clone a remote repository</h3>
           <form onSubmit={handleClone} className="grid form-grid">
             <label>
               Repository URL
@@ -200,7 +231,21 @@ function App() {
               Local name, optional
               <input value={cloneName} onChange={(event) => setCloneName(event.target.value)} placeholder="cJSON" />
             </label>
-            <button type="submit" disabled={loading}>{loading ? 'Working...' : 'Clone and analyze'}</button>
+            <button type="submit" disabled={loading}>{loading ? 'Working...' : 'Clone repository'}</button>
+          </form>
+
+          <h3>Upload a repository ZIP</h3>
+          <p className="muted">The ZIP must include the repository&apos;s <code>.git</code> directory and may be up to 50 MB.</p>
+          <form onSubmit={handleUpload} className="grid form-grid">
+            <label>
+              Repository ZIP
+              <input type="file" accept=".zip,application/zip" onChange={(event) => setUploadFile(event.target.files?.[0] || null)} required />
+            </label>
+            <label>
+              Local name, optional
+              <input value={uploadName} onChange={(event) => setUploadName(event.target.value)} placeholder="my-repository" />
+            </label>
+            <button type="submit" disabled={loading || !uploadFile}>{loading ? 'Working...' : 'Upload repository'}</button>
           </form>
         </section>
 
@@ -214,7 +259,7 @@ function App() {
               </select>
             </label>
           ) : (
-            <p className="muted">No cloned repositories yet. Clone a public repository URL to begin.</p>
+            <p className="muted">No repositories yet. Clone a remote URL or upload a repository ZIP to begin.</p>
           )}
         </section>
 
