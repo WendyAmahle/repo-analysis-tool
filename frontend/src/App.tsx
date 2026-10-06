@@ -35,6 +35,7 @@ type CommitRow = {
 };
 
 type Analysis = {
+  reference: string;
   authors: string[];
   commitCount: number;
   allCommitCount: number;
@@ -49,6 +50,8 @@ type Filters = {
   since: string;
   until: string;
   commits: string;
+  reference: string;
+  authorMerges: string;
 };
 
 const emptyFilters: Filters = {
@@ -56,7 +59,9 @@ const emptyFilters: Filters = {
   path: '',
   since: '',
   until: '',
-  commits: ''
+  commits: '',
+  reference: '',
+  authorMerges: ''
 };
 
 function formatDecimal(value: number): string {
@@ -161,7 +166,6 @@ function App() {
     <>
       <header>
         <h1>Repo Analysis Tool</h1>
-        <p>React + TypeScript dashboard with a Node/Express Git analysis API.</p>
       </header>
       <main>
         {error && <p className="alert error">{error}</p>}
@@ -220,10 +224,18 @@ function App() {
                   Until date
                   <input type="date" value={filters.until} onChange={(event) => setFilters({ ...filters, until: event.target.value })} />
                 </label>
+                <label>
+                  Reference commit
+                  <input value={filters.reference} onChange={(event) => setFilters({ ...filters, reference: event.target.value })} placeholder="HEAD or commit hash" />
+                </label>
               </div>
               <label>
                 Selected commits, optional
                 <textarea value={filters.commits} onChange={(event) => setFilters({ ...filters, commits: event.target.value })} rows={2} placeholder="Paste commit hashes separated by commas or spaces" />
+              </label>
+              <label>
+                Manual author merges, optional
+                <textarea value={filters.authorMerges} onChange={(event) => setFilters({ ...filters, authorMerges: event.target.value })} rows={3} placeholder="Canonical Name <email@example.com> = Alias Name <old@example.com>, Another Alias <email@example.com>" />
               </label>
               <button type="submit" disabled={loading}>{loading ? 'Analyzing...' : 'Apply filters'}</button>
             </form>
@@ -234,7 +246,7 @@ function App() {
           <>
             <section className="card">
               <h2>Repository metrics</h2>
-              <p className="muted">Metrics cover {analysis.commitCount} selected non-merge commits from {analysis.allCommitCount} total non-merge commits.</p>
+              <p className="muted">Metrics cover {analysis.commitCount} selected non-merge commits from {analysis.allCommitCount} total non-merge commits reachable from <code>{analysis.reference.slice(0, 12)}</code>.</p>
               <div className="grid metrics">
                 <MetricCard label="Added lines" value={analysis.repoMetrics.added} />
                 <MetricCard label="Removed lines" value={analysis.repoMetrics.removed} />
