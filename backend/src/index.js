@@ -44,6 +44,22 @@ async function ensureRepository(repo) {
   return target;
 }
 
+function positiveInteger(value, fallback, maximum = Number.MAX_SAFE_INTEGER) {
+  const parsed = Number.parseInt(String(value || ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, maximum) : fallback;
+}
+
+function paginate(rows, requestedPage, pageSize) {
+  const total = rows.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(positiveInteger(requestedPage, 1), totalPages);
+  const start = (page - 1) * pageSize;
+  return {
+    rows: rows.slice(start, start + pageSize),
+    page: { page, pageSize, total, totalPages }
+  };
+}
+
 app.get('/api/repos', async (_request, response) => {
   try {
     response.json({ repos: await listRepositories(repoDir) });
@@ -104,7 +120,24 @@ app.get('/api/repos/:repo/analysis', async (request, response) => {
       reference: String(request.query.reference || ''),
       authorMerges: String(request.query.authorMerges || '')
     });
-    response.json(analysis);
+    const pageSize = positiveInteger(request.query.pageSize, 50, 200);
+    const objects = paginate(analysis.objects, request.query.objectPage, pageSize);
+    const commits = paginate(analysis.commits, request.query.commitPage, pageSize);
+    const fileMetrics = paginate(analysis.fileMetrics, request.query.filePage, pageSize);
+    const directoryMetrics = paginate(analysis.directoryMetrics, request.query.directoryPage, pageSize);
+    response.json({
+      ...analysis,
+      objects: objects.rows,
+      commits: commits.rows,
+      fileMetrics: fileMetrics.rows,
+      directoryMetrics: directoryMetrics.rows,
+      pagination: {
+        objects: objects.page,
+        commits: commits.page,
+        fileMetrics: fileMetrics.page,
+        directoryMetrics: directoryMetrics.page
+      }
+    });
   } catch (error) {
     const status = error instanceof GitAnalysisError ? 400 : 404;
     response.status(status).json({ error: error.message });

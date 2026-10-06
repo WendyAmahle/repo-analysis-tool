@@ -7,6 +7,8 @@ import { promisify } from 'node:util';
 import yauzl from 'yauzl';
 
 const execFileAsync = promisify(execFile);
+const analysisCache = new Map();
+const MAX_ANALYSIS_CACHE_ENTRIES = 4;
 
 export class GitAnalysisError extends Error {}
 
@@ -463,8 +465,25 @@ async function addCommitSetObjects(repoPath, commits, objectMetrics, pathFilter 
 }
 
 export async function analyzeRepository(repoPath, filters = {}) {
-  const manualAuthorMap = parseManualAuthorMerges(filters.authorMerges || '');
   const reference = await resolveReference(repoPath, filters.reference || 'HEAD');
+  const cacheKey = JSON.stringify([
+    repoPath,
+    reference,
+    filters.author || '',
+    filters.path || '',
+    filters.since || '',
+    filters.until || '',
+    filters.commits || '',
+    filters.authorMerges || ''
+  ]);
+  if (analysisCache.has(cacheKey)) {
+    const cached = analysisCache.get(cacheKey);
+    analysisCache.delete(cacheKey);
+    analysisCache.set(cacheKey, cached);
+    return cached;
+  }
+
+  const manualAuthorMap = parseManualAuthorMerges(filters.authorMerges || '');
   const allCommits = await parseHistory(repoPath, reference, manualAuthorMap);
   const commits = filterChangesByPath(filterCommits(allCommits, filters), filters.path);
   const objectMetrics = new Map();
@@ -594,7 +613,7 @@ export async function analyzeRepository(repoPath, filters = {}) {
   repoMetrics.modificationFrequency = commitCount ? repoMetrics.modifications / commitCount : 0;
   repoMetrics.churnRate = commitCount ? repoMetrics.churn / commitCount : 0;
 
-  return {
+  const result = {
     reference,
     authors,
     commitCount,
@@ -605,4 +624,9 @@ export async function analyzeRepository(repoPath, filters = {}) {
     fileMetrics: fileMetricRows.reverse(),
     directoryMetrics: directoryMetricRows.reverse()
   };
+  analysisCache.set(cacheKey, result);
+  while (analysisCache.size > MAX_ANALYSIS_CACHE_ENTRIES) {
+    analysisCache.delete(analysisCache.keys().next().value);
+  }
+  return result;
 }

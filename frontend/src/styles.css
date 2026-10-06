@@ -118,6 +118,24 @@ button:disabled {
   overflow-x: auto;
 }
 
+.pagination,
+.pagination-actions {
+  align-items: center;
+  display: flex;
+  gap: .75rem;
+}
+
+.pagination {
+  justify-content: space-between;
+  margin-top: 1rem;
+}
+
+.pagination-actions button {
+  margin: 0;
+  padding: .4rem .75rem;
+  width: auto;
+}
+
 table {
   border-collapse: collapse;
   font-size: .92rem;

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 
 type RepoMetrics = {
   added: number;
@@ -48,6 +48,13 @@ type FileMetricRow = {
 
 type DirectoryMetricRow = FileMetricRow;
 
+type PageInfo = {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+};
+
 type Analysis = {
   reference: string;
   authors: string[];
@@ -58,6 +65,12 @@ type Analysis = {
   commits: CommitRow[];
   fileMetrics: FileMetricRow[];
   directoryMetrics: DirectoryMetricRow[];
+  pagination: {
+    objects: PageInfo;
+    commits: PageInfo;
+    fileMetrics: PageInfo;
+    directoryMetrics: PageInfo;
+  };
 };
 
 type Filters = {
@@ -80,12 +93,41 @@ const emptyFilters: Filters = {
   authorMerges: ''
 };
 
+type Pages = {
+  objects: number;
+  commits: number;
+  fileMetrics: number;
+  directoryMetrics: number;
+};
+
+const initialPages: Pages = {
+  objects: 1,
+  commits: 1,
+  fileMetrics: 1,
+  directoryMetrics: 1
+};
+
 function formatDecimal(value: number): string {
   return value.toFixed(2);
 }
 
 function formatPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
+}
+
+function PaginationControls({ page, onPageChange }: { page: PageInfo; onPageChange: (page: number) => void }) {
+  const start = page.total ? (page.page - 1) * page.pageSize + 1 : 0;
+  const end = Math.min(page.page * page.pageSize, page.total);
+  return (
+    <div className="pagination" aria-label="Table pagination">
+      <span>Showing {start}–{end} of {page.total}</span>
+      <div className="pagination-actions">
+        <button type="button" onClick={() => onPageChange(page.page - 1)} disabled={page.page <= 1}>Previous</button>
+        <span>Page {page.page} of {page.totalPages}</span>
+        <button type="button" onClick={() => onPageChange(page.page + 1)} disabled={page.page >= page.totalPages}>Next</button>
+      </div>
+    </div>
+  );
 }
 
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
@@ -106,6 +148,7 @@ function App() {
   const [cloneName, setCloneName] = useState('');
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadName, setUploadName] = useState('');
+  const [pages, setPages] = useState<Pages>(initialPages);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -120,7 +163,7 @@ function App() {
     }
   }
 
-  async function loadAnalysis() {
+  async function loadAnalysis(nextPages: Pages = pages, nextFilters: Filters = filters) {
     if (!selectedRepo) {
       setAnalysis(null);
       return;
@@ -128,13 +171,24 @@ function App() {
     setLoading(true);
     setError('');
     try {
-      const params = new URLSearchParams();
-      (Object.entries(filters) as [keyof Filters, string][]).forEach(([key, value]) => {
+      const params = new URLSearchParams({
+        pageSize: '50',
+        objectPage: String(nextPages.objects),
+        commitPage: String(nextPages.commits),
+        filePage: String(nextPages.fileMetrics),
+        directoryPage: String(nextPages.directoryMetrics)
+      });
+      (Object.entries(nextFilters) as [keyof Filters, string][]).forEach(([key, value]) => {
         if (value.trim()) params.set(key, value.trim());
       });
-      const query = params.toString() ? `?${params.toString()}` : '';
-      const data = await fetchJson<Analysis>(`/api/repos/${encodeURIComponent(selectedRepo)}/analysis${query}`);
+      const data = await fetchJson<Analysis>(`/api/repos/${encodeURIComponent(selectedRepo)}/analysis?${params.toString()}`);
       setAnalysis(data);
+      setPages({
+        objects: data.pagination.objects.page,
+        commits: data.pagination.commits.page,
+        fileMetrics: data.pagination.fileMetrics.page,
+        directoryMetrics: data.pagination.directoryMetrics.page
+      });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Unable to analyze repository.');
       setAnalysis(null);
@@ -148,12 +202,10 @@ function App() {
   }, []);
 
   useEffect(() => {
-    loadAnalysis();
+    setFilters(emptyFilters);
+    setPages(initialPages);
+    loadAnalysis(initialPages, emptyFilters);
   }, [selectedRepo]);
-
-  const visibleCommits = useMemo(() => analysis?.commits.slice(0, 100) ?? [], [analysis]);
-  const visibleFileMetrics = useMemo(() => analysis?.fileMetrics.slice(0, 200) ?? [], [analysis]);
-  const visibleDirectoryMetrics = useMemo(() => analysis?.directoryMetrics.slice(0, 200) ?? [], [analysis]);
 
   async function handleClone(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -207,7 +259,14 @@ function App() {
 
   function handleFilterSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    loadAnalysis();
+    setPages(initialPages);
+    loadAnalysis(initialPages, filters);
+  }
+
+  function changePage(section: keyof Pages, page: number) {
+    const nextPages = { ...pages, [section]: page };
+    setPages(nextPages);
+    loadAnalysis(nextPages, filters);
   }
 
   return (
@@ -345,6 +404,7 @@ function App() {
                 </tbody>
               </table>
               {!analysis.objects.length && <p className="muted">No matching metrics for the current filters.</p>}
+              <PaginationControls page={analysis.pagination.objects} onPageChange={(page) => changePage('objects', page)} />
             </section>
 
             <section className="card table-card">
@@ -355,7 +415,7 @@ function App() {
                   <tr><th>Commit</th><th>Date</th><th>Author</th><th>File</th><th>Added</th><th>Removed</th><th>Growth</th><th>Churn</th></tr>
                 </thead>
                 <tbody>
-                  {visibleFileMetrics.map((row) => (
+                  {analysis.fileMetrics.map((row) => (
                     <tr key={`${row.commit}-${row.path}`}>
                       <td><code>{row.shortCommit}</code></td>
                       <td>{row.date}</td>
@@ -369,7 +429,8 @@ function App() {
                   ))}
                 </tbody>
               </table>
-              {!visibleFileMetrics.length && <p className="muted">No file metric rows for the current filters.</p>}
+              {!analysis.fileMetrics.length && <p className="muted">No file metric rows for the current filters.</p>}
+              <PaginationControls page={analysis.pagination.fileMetrics} onPageChange={(page) => changePage('fileMetrics', page)} />
             </section>
 
             <section className="card table-card">
@@ -380,7 +441,7 @@ function App() {
                   <tr><th>Commit</th><th>Date</th><th>Author</th><th>Directory</th><th>Added</th><th>Removed</th><th>Growth</th><th>Churn</th></tr>
                 </thead>
                 <tbody>
-                  {visibleDirectoryMetrics.map((row) => (
+                  {analysis.directoryMetrics.map((row) => (
                     <tr key={`${row.commit}-${row.path}`}>
                       <td><code>{row.shortCommit}</code></td>
                       <td>{row.date}</td>
@@ -394,7 +455,8 @@ function App() {
                   ))}
                 </tbody>
               </table>
-              {!visibleDirectoryMetrics.length && <p className="muted">No directory metric rows for the current filters.</p>}
+              {!analysis.directoryMetrics.length && <p className="muted">No directory metric rows for the current filters.</p>}
+              <PaginationControls page={analysis.pagination.directoryMetrics} onPageChange={(page) => changePage('directoryMetrics', page)} />
             </section>
 
             <section className="card table-card">
@@ -404,7 +466,7 @@ function App() {
                   <tr><th>Commit</th><th>Date</th><th>Author</th><th>Added</th><th>Removed</th><th>Churn</th><th>Subject</th></tr>
                 </thead>
                 <tbody>
-                  {visibleCommits.map((commit) => (
+                  {analysis.commits.map((commit) => (
                     <tr key={commit.sha}>
                       <td><code>{commit.shortSha}</code></td>
                       <td>{commit.date}</td>
@@ -417,6 +479,7 @@ function App() {
                   ))}
                 </tbody>
               </table>
+              <PaginationControls page={analysis.pagination.commits} onPageChange={(page) => changePage('commits', page)} />
             </section>
           </>
         )}
