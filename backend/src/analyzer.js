@@ -267,20 +267,30 @@ export async function analyzeRepository(repoPath, filters = {}) {
   const authors = [...new Set(allCommits.map((commit) => commit.author))].sort();
   const commitRows = [];
   const fileMetricRows = [];
+  const directoryMetricRows = [];
 
   await addCommitSetObjects(repoPath, commits, objectMetrics);
 
   for (const commit of commits) {
     const changes = await parseNumstat(repoPath, commit.sha);
     const touchedObjects = new Set();
+    const commitDirectoryMetrics = new Map();
     let commitAdded = 0;
     let commitRemoved = 0;
 
+    function directoryMetricFor(directory) {
+      if (!commitDirectoryMetrics.has(directory)) {
+        commitDirectoryMetrics.set(directory, { added: 0, removed: 0, growth: 0, churn: 0 });
+      }
+      return commitDirectoryMetrics.get(directory);
+    }
+
     for (const change of changes) {
       const changeChurn = change.added + change.removed;
+      const directories = parentDirs(change.path);
       const affected = [
         { path: change.path, type: 'file' },
-        ...parentDirs(change.path).map((dir) => ({ path: dir, type: 'directory' }))
+        ...directories.map((dir) => ({ path: dir, type: 'directory' }))
       ];
       for (const object of affected) {
         const metric = ensureMetric(objectMetrics, object.path, object.type);
@@ -304,6 +314,13 @@ export async function analyzeRepository(repoPath, filters = {}) {
         growth: change.added - change.removed,
         churn: changeChurn
       });
+      for (const directory of directories) {
+        const directoryMetric = directoryMetricFor(directory);
+        directoryMetric.added += change.added;
+        directoryMetric.removed += change.removed;
+        directoryMetric.growth += change.added - change.removed;
+        directoryMetric.churn += changeChurn;
+      }
       commitAdded += change.added;
       commitRemoved += change.removed;
     }
@@ -311,6 +328,17 @@ export async function analyzeRepository(repoPath, filters = {}) {
     for (const objectPath of touchedObjects) {
       ensureMetric(objectMetrics, objectPath, objectMetrics.get(objectPath)?.type || 'file').modifications += 1;
       ensureAuthorMetric(objectAuthors, objectPath, commit.author).modifications += 1;
+    }
+
+    for (const [directory, metric] of commitDirectoryMetrics.entries()) {
+      directoryMetricRows.push({
+        commit: commit.sha,
+        shortCommit: commit.sha.slice(0, 8),
+        date: new Date(commit.timestamp * 1000).toISOString().slice(0, 10),
+        author: commit.author,
+        path: directory,
+        ...metric
+      });
     }
 
     commitRows.push({
@@ -369,6 +397,7 @@ export async function analyzeRepository(repoPath, filters = {}) {
     repoMetrics,
     objects: rows,
     commits: commitRows.reverse(),
-    fileMetrics: fileMetricRows.reverse()
+    fileMetrics: fileMetricRows.reverse(),
+    directoryMetrics: directoryMetricRows.reverse()
   };
 }
