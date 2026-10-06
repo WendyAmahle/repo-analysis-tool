@@ -332,16 +332,31 @@ function App() {
     loadAnalysis(nextPages, filters);
   }
 
+  function clearFilters() {
+    setFilters(emptyFilters);
+    setPages(initialPages);
+    loadAnalysis(initialPages, emptyFilters);
+  }
+
   return (
     <>
       <header>
-        <h1>Repo Analysis Tool</h1>
+        <div className="header-content">
+          <div><h1>Repo Analysis Tool</h1><p>Explore change, ownership, and hotspots across Git history.</p></div>
+          <nav aria-label="Dashboard sections">
+            <a href="#repositories">Repositories</a>
+            <a href="#filters">Filters</a>
+            <a href="#insights">Insights</a>
+            <a href="#object-metrics">Metrics</a>
+          </nav>
+        </div>
       </header>
       <main>
         {error && <p className="alert error">{error}</p>}
         {message && <p className="alert success">{message}</p>}
+        {loading && <p className="analysis-status"><span className="spinner" />Working on your repository…</p>}
 
-        <section className="card">
+        <section className="card" id="repositories">
           <h2>Add repository</h2>
           <h3>Clone a remote repository</h3>
           <form onSubmit={handleClone} className="grid form-grid">
@@ -386,7 +401,7 @@ function App() {
         </section>
 
         {selectedRepo && (
-          <section className="card">
+          <section className="card" id="filters">
             <h2>Filters</h2>
             <form onSubmit={handleFilterSubmit}>
               <div className="grid form-grid">
@@ -422,14 +437,17 @@ function App() {
                 Manual author merges, optional
                 <textarea value={filters.authorMerges} onChange={(event) => setFilters({ ...filters, authorMerges: event.target.value })} rows={3} placeholder="Canonical Name <email@example.com> = Alias Name <old@example.com>, Another Alias <email@example.com>" />
               </label>
-              <button type="submit" disabled={loading}>{loading ? 'Analyzing...' : 'Apply filters'}</button>
+              <div className="form-actions">
+                <button type="submit" disabled={loading}>{loading ? 'Analyzing...' : 'Apply filters'}</button>
+                <button type="button" className="secondary-button" onClick={clearFilters} disabled={loading}>Clear filters</button>
+              </div>
             </form>
           </section>
         )}
 
         {analysis && (
           <>
-            <section className="card">
+            <section className="card" id="repository-metrics">
               <h2>Repository metrics</h2>
               <p className="muted">Metrics cover {analysis.commitCount} selected non-merge commits from {analysis.allCommitCount} total non-merge commits reachable from <code>{analysis.reference.slice(0, 12)}</code>.</p>
               <div className="grid metrics">

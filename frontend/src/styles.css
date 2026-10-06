@@ -21,7 +21,31 @@ header h1 {
 
 header p {
   margin: 0;
-  color: #cbd5e1;
+  color: #dbeafe;
+}
+
+.header-content {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  margin: 0 auto;
+  max-width: 1180px;
+}
+
+header nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+}
+
+header nav a {
+  background: rgba(255, 255, 255, .12);
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 999px;
+  color: white;
+  padding: .4rem .75rem;
+  text-decoration: none;
 }
 
 main {
@@ -81,6 +105,41 @@ button {
 button:disabled {
   cursor: wait;
   opacity: .65;
+}
+
+.form-actions {
+  display: flex;
+  gap: .75rem;
+}
+
+.secondary-button {
+  background: white;
+  border-color: #94a3b8;
+  color: #334155;
+}
+
+.analysis-status {
+  align-items: center;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  color: #1e40af;
+  display: flex;
+  gap: .6rem;
+  padding: .7rem .9rem;
+}
+
+.spinner {
+  animation: spin .8s linear infinite;
+  border: 3px solid #bfdbfe;
+  border-radius: 50%;
+  border-top-color: #2563eb;
+  height: 1rem;
+  width: 1rem;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .alert {
@@ -255,6 +314,11 @@ button:disabled {
 }
 
 @media (max-width: 760px) {
+  .header-content {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
   .insight-grid {
     grid-template-columns: 1fr;
   }
