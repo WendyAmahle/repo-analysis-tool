@@ -1,25 +1,19 @@
 # Repo Analysis Tool
 
-A basic web dashboard for analyzing how Git repositories change over time.
+A React + TypeScript and Node/Express web dashboard for analyzing how Git repositories change over time.
 
-## Required features from the brief
+## Project structure
 
-- Repository input by remote URL clone.
-- Repository input by ZIP upload containing `.git`.
-- Multiple repository dashboard support.
-- Author identity merging with `.mailmap`.
-- Manual author merging when no `.mailmap` is provided.
-- File metrics: added lines, removed lines, growth, churn.
-- Directory metrics: recursive added lines, removed lines, growth, churn.
-- Repository metrics: root directory totals.
-- Commit-set metrics: metrics over selected commits or time ranges.
-- Author metrics: modifications, churn, ownership per file or directory.
-- Filters by repository, author, file/directory, time period, and selected commits.
-- Binary file exclusion and rename detection with a 50% threshold.
+```text
+backend/   Node/Express API and Git metric analyzer
+frontend/  React + TypeScript dashboard
+docs/      Assignment requirements and project documentation
+data/      Local cloned repositories, ignored by Git
+```
 
-## Basic first version implemented
+## Basic version implemented
 
-This baseline intentionally focuses on the core workflow first:
+This baseline focuses on the core assignment workflow first:
 
 - Clone a public remote Git repository URL.
 - Store and switch between multiple cloned repositories.
@@ -28,7 +22,7 @@ This baseline intentionally focuses on the core workflow first:
 - Ignore binary files by skipping Git `numstat` entries reported as `-`.
 - Use Git rename detection with `-M50%`.
 - Calculate file, directory, repository, commit-set, and author metrics.
-- Filter by author, path, date range, and manually entered commit hashes.
+- Filter by author, file/directory path, date range, and manually entered commit hashes.
 
 Not yet implemented:
 
@@ -37,17 +31,53 @@ Not yet implemented:
 - Persistent database/cache for large repositories.
 - Charts and export views.
 
+The full assignment feature list is in [docs/requirements.md](docs/requirements.md).
+
 ## Run locally
 
+Install dependencies:
+
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python app.py
+npm install
+npm run install:all
 ```
 
-Then open `http://127.0.0.1:5000`.
+Start both the backend API and frontend dashboard:
+
+```bash
+npm run dev
+```
+
+Then open:
+
+```text
+http://127.0.0.1:5173
+```
+
+The backend API runs on:
+
+```text
+http://127.0.0.1:3001
+```
+
+## Build
+
+```bash
+npm run build
+```
+
+After building, run the backend server:
+
+```bash
+npm start
+```
+
+Then open:
+
+```text
+http://127.0.0.1:3001
+```
 
 ## Notes
 
-The app shells out to `git`, so Git must be installed on the machine running the app. Metrics are calculated on demand from the cloned repository history.
+The backend shells out to the `git` command line, so Git must be installed on the machine running the app. Metrics are calculated on demand from cloned repository history.
