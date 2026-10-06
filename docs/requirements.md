@@ -21,16 +21,16 @@ Implemented first:
 
 - Clone a public remote Git repository URL.
 - Store and switch between multiple cloned repositories.
-- Analyze non-merge commits reachable from `HEAD`.
+- Analyze non-merge commits reachable from `HEAD` or a user-provided reference commit.
 - Normalize authors through Git `.mailmap` using `git check-mailmap`.
+- Merge authors manually using dashboard merge rules when `.mailmap` is not enough.
 - Ignore binary files by skipping Git `numstat` entries reported as `-`.
 - Use Git rename detection with `-M50%`.
 - Calculate file, directory, repository, commit-set, and author metrics.
-- Filter by author, path, date range, and manually entered commit hashes.
+- Filter by author, path, date range, reference commit, and manually entered commit hashes.
 
 Deferred:
 
-- ZIP upload.
-- Manual author merge UI.
+- ZIP upload and extraction.
 - Persistent database/cache for large repositories.
 - Charts and export views.
