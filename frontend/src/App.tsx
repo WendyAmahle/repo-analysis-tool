@@ -46,6 +46,8 @@ type FileMetricRow = {
   churn: number;
 };
 
+type DirectoryMetricRow = FileMetricRow;
+
 type Analysis = {
   reference: string;
   authors: string[];
@@ -55,6 +57,7 @@ type Analysis = {
   objects: ObjectMetric[];
   commits: CommitRow[];
   fileMetrics: FileMetricRow[];
+  directoryMetrics: DirectoryMetricRow[];
 };
 
 type Filters = {
@@ -148,6 +151,7 @@ function App() {
 
   const visibleCommits = useMemo(() => analysis?.commits.slice(0, 100) ?? [], [analysis]);
   const visibleFileMetrics = useMemo(() => analysis?.fileMetrics.slice(0, 200) ?? [], [analysis]);
+  const visibleDirectoryMetrics = useMemo(() => analysis?.directoryMetrics.slice(0, 200) ?? [], [analysis]);
 
   async function handleClone(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -321,6 +325,31 @@ function App() {
                 </tbody>
               </table>
               {!visibleFileMetrics.length && <p className="muted">No file metric rows for the current filters.</p>}
+            </section>
+
+            <section className="card table-card">
+              <h2>Per-commit directory metrics</h2>
+              <p className="muted">For each changed directory: growth = added − removed, churn = added + removed across immediate children and nested subdirectories.</p>
+              <table>
+                <thead>
+                  <tr><th>Commit</th><th>Date</th><th>Author</th><th>Directory</th><th>Added</th><th>Removed</th><th>Growth</th><th>Churn</th></tr>
+                </thead>
+                <tbody>
+                  {visibleDirectoryMetrics.map((row) => (
+                    <tr key={`${row.commit}-${row.path}`}>
+                      <td><code>{row.shortCommit}</code></td>
+                      <td>{row.date}</td>
+                      <td>{row.author}</td>
+                      <td><code>{row.path}</code></td>
+                      <td>{row.added}</td>
+                      <td>{row.removed}</td>
+                      <td>{row.growth}</td>
+                      <td>{row.churn}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {!visibleDirectoryMetrics.length && <p className="muted">No directory metric rows for the current filters.</p>}
             </section>
 
             <section className="card table-card">
