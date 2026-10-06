@@ -28,9 +28,11 @@ Implemented:
 - Ignore binary files by skipping Git `numstat` entries reported as `-`.
 - Use Git rename detection with `-M50%`.
 - Calculate file, directory, repository, commit-set, and author metrics.
-- Filter by author, path, date range, reference commit, and manually entered commit hashes.
+- Filter metric calculations by author, path, date range, reference commit, and manually entered commit hashes.
+- Batch Git history and mailmap processing, cache recent analyses, and paginate large result tables.
+- Visualize monthly change trends, top contributors, and highest-churn files.
 
 Not currently implemented:
 
-- Persistent database/cache for large repositories.
-- Charts and export views.
+- Persistent disk/database cache across application restarts.
+- CSV or report export.

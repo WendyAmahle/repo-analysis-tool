@@ -58,7 +58,17 @@ data/      Locally cloned or uploaded repositories, ignored by Git
 - Commit-set metrics: modifications, modification frequency, and churn rate.
 - Author metrics: modifications, churn, and ownership for each file or directory.
 - Per-commit tables for file and directory changes, plus a commit summary table.
+- Interactive visual summaries for monthly change trends, top contributors, and highest-churn files.
+- Paginated metric tables that keep large result sets responsive without hiding their total size.
 - Binary-file exclusion using Git `numstat` and rename detection at a 50% similarity threshold (`-M50%`).
+
+### Performance architecture
+
+- Parse commit metadata and line changes in one batched Git history command rather than one process per commit.
+- Resolve all unique author identities through one `.mailmap` operation.
+- Inspect only the boundary snapshots needed to establish the selected object set.
+- Cache the four most recently used analysis/filter combinations in memory.
+- Paginate API responses to limit browser rendering and transfer size.
 
 The formulas used are:
 
@@ -137,5 +147,5 @@ http://127.0.0.1:3001
 
 - A ZIP upload must contain the repository's `.git` directory; a source-code-only GitHub ZIP does not contain history and cannot be analyzed.
 - Repository data is stored locally under `data/repos/` and is not committed to this project.
-- Metrics are calculated on demand, so repositories with long histories can take more time to process.
+- The first analysis is calculated on demand and cached; repeated filters and table-page requests reuse recent results.
 - The backend shells out to the installed `git` command, keeping rename, mailmap, binary, and history behavior aligned with Git itself.
