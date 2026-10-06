@@ -266,6 +266,7 @@ export async function analyzeRepository(repoPath, filters = {}) {
   const objectAuthors = new Map();
   const authors = [...new Set(allCommits.map((commit) => commit.author))].sort();
   const commitRows = [];
+  const fileMetricRows = [];
 
   await addCommitSetObjects(repoPath, commits, objectMetrics);
 
@@ -292,6 +293,17 @@ export async function analyzeRepository(repoPath, filters = {}) {
         authorMetric.churn += changeChurn;
         if (changeChurn > 0) touchedObjects.add(object.path);
       }
+      fileMetricRows.push({
+        commit: commit.sha,
+        shortCommit: commit.sha.slice(0, 8),
+        date: new Date(commit.timestamp * 1000).toISOString().slice(0, 10),
+        author: commit.author,
+        path: change.path,
+        added: change.added,
+        removed: change.removed,
+        growth: change.added - change.removed,
+        churn: changeChurn
+      });
       commitAdded += change.added;
       commitRemoved += change.removed;
     }
@@ -356,6 +368,7 @@ export async function analyzeRepository(repoPath, filters = {}) {
     allCommitCount: allCommits.length,
     repoMetrics,
     objects: rows,
-    commits: commitRows.reverse()
+    commits: commitRows.reverse(),
+    fileMetrics: fileMetricRows.reverse()
   };
 }
