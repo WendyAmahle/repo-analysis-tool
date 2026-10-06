@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
 import { access, mkdir, mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -13,13 +13,32 @@ export class GitAnalysisError extends Error {}
 async function runGit(repoPath, args) {
   try {
     const { stdout } = await execFileAsync('git', ['-C', repoPath, ...args], {
-      maxBuffer: 1024 * 1024 * 100
+      maxBuffer: 1024 * 1024 * 512
     });
     return stdout;
   } catch (error) {
     const message = error.stderr?.trim() || error.message || 'git command failed';
     throw new GitAnalysisError(message);
   }
+}
+
+function runGitWithInput(repoPath, args, input) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', ['-C', repoPath, ...args]);
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on('data', (chunk) => stdout.push(chunk));
+    child.stderr.on('data', (chunk) => stderr.push(chunk));
+    child.on('error', (error) => reject(new GitAnalysisError(error.message)));
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(Buffer.concat(stdout).toString('utf8'));
+      } else {
+        reject(new GitAnalysisError(Buffer.concat(stderr).toString('utf8').trim() || 'git command failed'));
+      }
+    });
+    child.stdin.end(input);
+  });
 }
 
 export function safeRepoName(value) {
@@ -232,15 +251,28 @@ function parseManualAuthorMerges(value = '') {
   return manualMap;
 }
 
-async function normaliseAuthor(repoPath, name, email, manualAuthorMap) {
-  const identity = `${name} <${email}>`;
-  let mapped = identity;
-  try {
-    mapped = (await runGit(repoPath, ['check-mailmap', identity])).trim() || identity;
-  } catch {
-    mapped = identity;
+async function normaliseAuthors(repoPath, commits, manualAuthorMap) {
+  const identities = [...new Set(commits.map((commit) => commit.identity))];
+  const mailmap = new Map(identities.map((identity) => [identity, identity]));
+  if (identities.length) {
+    try {
+      const output = await runGitWithInput(repoPath, ['check-mailmap', '--stdin'], `${identities.join('\n')}\n`);
+      const mappedIdentities = output.trimEnd().split('\n');
+      if (mappedIdentities.length === identities.length) {
+        identities.forEach((identity, index) => mailmap.set(identity, mappedIdentities[index] || identity));
+      }
+    } catch {
+      // Keep original identities when mailmap resolution is unavailable.
+    }
   }
-  return manualAuthorMap.get(mapped) || mapped;
+
+  return commits.map(({ identity, ...commit }) => {
+    const mapped = mailmap.get(identity) || identity;
+    return {
+      ...commit,
+      author: manualAuthorMap.get(mapped) || mapped
+    };
+  });
 }
 
 async function resolveReference(repoPath, reference = '') {
@@ -248,43 +280,63 @@ async function resolveReference(repoPath, reference = '') {
   return (await runGit(repoPath, ['rev-parse', '--verify', `${requestedReference}^{commit}`])).trim();
 }
 
-async function parseCommits(repoPath, reference, manualAuthorMap) {
+async function parseHistory(repoPath, reference, manualAuthorMap) {
   const raw = await runGit(repoPath, [
     'log',
     '--no-merges',
     '--reverse',
-    '--format=%H%x1f%an%x1f%ae%x1f%ct%x1f%s%x1e',
+    '--root',
+    '-M50%',
+    '--numstat',
+    '--format=%x1e%H%x1f%an%x1f%ae%x1f%ct%x1f%s',
     reference
   ]);
   const commits = [];
   for (const record of raw.split('\x1e')) {
-    const clean = record.replace(/^\n|\n$/g, '');
+    const clean = record.replace(/^\n+|\n+$/g, '');
     if (!clean) continue;
-    const parts = clean.split('\x1f');
+    const [header, ...numstatLines] = clean.split('\n');
+    const parts = header.split('\x1f');
     if (parts.length < 5) continue;
-    const [sha, name, email, timestamp, subject] = parts;
+    const [sha, name, email, timestamp, ...subjectParts] = parts;
+    const changes = [];
+    for (const line of numstatLines) {
+      if (!line.trim()) continue;
+      const [added, removed, ...pathParts] = line.split('\t');
+      if (!pathParts.length || added === '-' || removed === '-') continue;
+      changes.push({
+        ...changedPaths(pathParts.join('\t')),
+        added: Number(added),
+        removed: Number(removed)
+      });
+    }
     commits.push({
       sha,
-      author: await normaliseAuthor(repoPath, name, email, manualAuthorMap),
+      identity: `${name} <${email}>`,
       email,
       timestamp: Number(timestamp),
-      subject
+      subject: subjectParts.join('\x1f'),
+      changes
     });
   }
-  return commits;
+  return normaliseAuthors(repoPath, commits, manualAuthorMap);
 }
 
-function renameTarget(filePath) {
-  if (!filePath.includes(' => ')) return filePath;
+function changedPaths(filePath) {
+  if (!filePath.includes(' => ')) return { path: filePath };
   if (filePath.includes('{') && filePath.includes('}')) {
     const start = filePath.indexOf('{');
     const end = filePath.indexOf('}');
     const prefix = filePath.slice(0, start);
-    const inside = filePath.slice(start + 1, end);
+    const [source, target] = filePath.slice(start + 1, end).split(' => ');
     const suffix = filePath.slice(end + 1);
-    return `${prefix}${inside.split(' => ').pop()}${suffix}`;
+    return {
+      path: `${prefix}${target}${suffix}`,
+      previousPath: `${prefix}${source}${suffix}`
+    };
   }
-  return filePath.split(' => ').pop();
+  const [source, target] = filePath.split(' => ');
+  return { path: target, previousPath: source };
 }
 
 function parentDirs(filePath) {
@@ -296,24 +348,6 @@ function parentDirs(filePath) {
     dirs.push(parts.slice(0, index).join('/'));
   }
   return dirs;
-}
-
-async function parseNumstat(repoPath, sha) {
-  const raw = await runGit(repoPath, ['diff-tree', '--root', '--no-commit-id', '--numstat', '-M50%', '-r', sha]);
-  const changes = [];
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
-    const parts = line.split('\t');
-    if (parts.length < 3) continue;
-    const [added, removed, ...pathParts] = parts;
-    if (added === '-' || removed === '-') continue;
-    changes.push({
-      path: renameTarget(pathParts.join('\t')),
-      added: Number(added),
-      removed: Number(removed)
-    });
-  }
-  return changes;
 }
 
 async function listFilesAtReference(repoPath, reference) {
@@ -396,16 +430,13 @@ function addObjectPath(objectMetrics, filePath) {
 }
 
 async function addCommitSetObjects(repoPath, commits, objectMetrics) {
-  const seenReferences = new Set();
-  for (const commit of commits) {
-    const references = [commit.sha];
-    const parent = await previousCommit(repoPath, commit.sha);
-    if (parent) references.push(parent);
-
-    for (const reference of references) {
-      if (seenReferences.has(reference)) continue;
-      seenReferences.add(reference);
-      const files = await listFilesAtReference(repoPath, reference);
+  if (commits.length) {
+    const firstCommit = commits[0];
+    const lastCommit = commits[commits.length - 1];
+    const firstParent = await previousCommit(repoPath, firstCommit.sha);
+    const references = [...new Set([firstParent, firstCommit.sha, lastCommit.sha].filter(Boolean))];
+    const snapshots = await Promise.all(references.map((reference) => listFilesAtReference(repoPath, reference)));
+    for (const files of snapshots) {
       for (const filePath of files) addObjectPath(objectMetrics, filePath);
     }
   }
@@ -415,7 +446,7 @@ async function addCommitSetObjects(repoPath, commits, objectMetrics) {
 export async function analyzeRepository(repoPath, filters = {}) {
   const manualAuthorMap = parseManualAuthorMerges(filters.authorMerges || '');
   const reference = await resolveReference(repoPath, filters.reference || 'HEAD');
-  const allCommits = await parseCommits(repoPath, reference, manualAuthorMap);
+  const allCommits = await parseHistory(repoPath, reference, manualAuthorMap);
   const commits = filterCommits(allCommits, filters);
   const objectMetrics = new Map();
   const objectAuthors = new Map();
@@ -427,7 +458,7 @@ export async function analyzeRepository(repoPath, filters = {}) {
   await addCommitSetObjects(repoPath, commits, objectMetrics);
 
   for (const commit of commits) {
-    const changes = await parseNumstat(repoPath, commit.sha);
+    const changes = commit.changes;
     const touchedObjects = new Set();
     const commitDirectoryMetrics = new Map();
     let commitAdded = 0;
@@ -441,6 +472,7 @@ export async function analyzeRepository(repoPath, filters = {}) {
     }
 
     for (const change of changes) {
+      if (change.previousPath) addObjectPath(objectMetrics, change.previousPath);
       const changeChurn = change.added + change.removed;
       const directories = parentDirs(change.path);
       const affected = [
