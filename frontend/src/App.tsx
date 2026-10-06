@@ -48,6 +48,22 @@ type FileMetricRow = {
 
 type DirectoryMetricRow = FileMetricRow;
 
+type TrendPoint = {
+  date: string;
+  added: number;
+  removed: number;
+  churn: number;
+  commits: number;
+};
+
+type InsightAuthor = AuthorMetric;
+
+type Hotspot = {
+  path: string;
+  churn: number;
+  modifications: number;
+};
+
 type PageInfo = {
   page: number;
   pageSize: number;
@@ -61,6 +77,11 @@ type Analysis = {
   commitCount: number;
   allCommitCount: number;
   repoMetrics: RepoMetrics;
+  insights: {
+    timeline: TrendPoint[];
+    authors: InsightAuthor[];
+    hotspots: Hotspot[];
+  };
   objects: ObjectMetric[];
   commits: CommitRow[];
   fileMetrics: FileMetricRow[];
@@ -126,6 +147,48 @@ function PaginationControls({ page, onPageChange }: { page: PageInfo; onPageChan
         <span>Page {page.page} of {page.totalPages}</span>
         <button type="button" onClick={() => onPageChange(page.page + 1)} disabled={page.page >= page.totalPages}>Next</button>
       </div>
+    </div>
+  );
+}
+
+function TrendChart({ points }: { points: TrendPoint[] }) {
+  if (!points.length) return <p className="muted">No timeline data for the current filters.</p>;
+  const step = Math.max(1, Math.ceil(points.length / 60));
+  const sampled = points.filter((_point, index) => index % step === 0 || index === points.length - 1);
+  const width = 760;
+  const height = 220;
+  const padding = 24;
+  const maximum = Math.max(1, ...sampled.flatMap((point) => [point.added, point.removed]));
+  const coordinates = (key: 'added' | 'removed') => sampled.map((point, index) => {
+    const x = padding + (index * (width - padding * 2)) / Math.max(1, sampled.length - 1);
+    const y = height - padding - (point[key] / maximum) * (height - padding * 2);
+    return `${x},${y}`;
+  }).join(' ');
+
+  return (
+    <div className="trend-chart">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Monthly added and removed line trend">
+        <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} className="chart-axis-line" />
+        <polyline points={coordinates('added')} className="chart-line chart-added" />
+        <polyline points={coordinates('removed')} className="chart-line chart-removed" />
+      </svg>
+      <div className="chart-labels"><span>{sampled[0].date}</span><span>{sampled[sampled.length - 1].date}</span></div>
+      <div className="chart-legend"><span><i className="legend-added" />Added</span><span><i className="legend-removed" />Removed</span></div>
+    </div>
+  );
+}
+
+function RankedBars({ items }: { items: { label: string; value: number; detail: string }[] }) {
+  const maximum = Math.max(1, ...items.map((item) => item.value));
+  if (!items.length) return <p className="muted">No data for the current filters.</p>;
+  return (
+    <div className="ranked-bars">
+      {items.map((item) => (
+        <div className="ranked-row" key={item.label} title={item.label}>
+          <div className="ranked-label"><span>{item.label}</span><strong>{item.detail}</strong></div>
+          <div className="ranked-track"><span style={{ width: `${Math.max(2, item.value / maximum * 100)}%` }} /></div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -379,7 +442,33 @@ function App() {
               </div>
             </section>
 
-            <section className="card table-card">
+            <section className="card" id="insights">
+              <h2>Visual insights</h2>
+              <div className="insight-grid">
+                <article className="insight-panel insight-wide">
+                  <h3>Change trend by month</h3>
+                  <TrendChart points={analysis.insights.timeline} />
+                </article>
+                <article className="insight-panel">
+                  <h3>Top contributors</h3>
+                  <RankedBars items={analysis.insights.authors.map((author) => ({
+                    label: author.author,
+                    value: author.churn,
+                    detail: `${formatPercent(author.ownership)} · ${author.churn.toLocaleString()} churn`
+                  }))} />
+                </article>
+                <article className="insight-panel">
+                  <h3>Highest-churn files</h3>
+                  <RankedBars items={analysis.insights.hotspots.map((file) => ({
+                    label: file.path,
+                    value: file.churn,
+                    detail: `${file.churn.toLocaleString()} churn · ${file.modifications} modifications`
+                  }))} />
+                </article>
+              </div>
+            </section>
+
+            <section className="card table-card" id="object-metrics">
               <h2>File and directory metrics</h2>
               <table>
                 <thead>

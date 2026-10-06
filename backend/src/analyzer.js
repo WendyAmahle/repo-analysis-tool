@@ -447,6 +447,37 @@ function addObjectPath(objectMetrics, filePath) {
   }
 }
 
+function buildInsights(commitRows, rows, objectAuthors, repoMetrics) {
+  const monthly = new Map();
+  for (const commit of commitRows) {
+    const month = commit.date.slice(0, 7);
+    if (!monthly.has(month)) monthly.set(month, { date: month, added: 0, removed: 0, churn: 0, commits: 0 });
+    const point = monthly.get(month);
+    point.added += commit.added;
+    point.removed += commit.removed;
+    point.churn += commit.churn;
+    point.commits += 1;
+  }
+
+  const rootAuthors = objectAuthors.get('.') || new Map();
+  const authors = [...rootAuthors.entries()]
+    .map(([author, values]) => ({
+      author,
+      ...values,
+      ownership: repoMetrics.churn ? values.churn / repoMetrics.churn : 0
+    }))
+    .sort((left, right) => right.churn - left.churn)
+    .slice(0, 8);
+
+  const hotspots = rows
+    .filter((row) => row.type === 'file' && row.churn > 0)
+    .sort((left, right) => right.churn - left.churn)
+    .slice(0, 8)
+    .map((row) => ({ path: row.path, churn: row.churn, modifications: row.modifications }));
+
+  return { timeline: [...monthly.values()], authors, hotspots };
+}
+
 async function addCommitSetObjects(repoPath, commits, objectMetrics, pathFilter = '') {
   if (commits.length) {
     const firstCommit = commits[0];
@@ -612,6 +643,7 @@ export async function analyzeRepository(repoPath, filters = {}) {
   const repoMetrics = objectMetrics.get('.') || emptyMetrics('directory');
   repoMetrics.modificationFrequency = commitCount ? repoMetrics.modifications / commitCount : 0;
   repoMetrics.churnRate = commitCount ? repoMetrics.churn / commitCount : 0;
+  const insights = buildInsights(commitRows, rows, objectAuthors, repoMetrics);
 
   const result = {
     reference,
@@ -619,6 +651,7 @@ export async function analyzeRepository(repoPath, filters = {}) {
     commitCount,
     allCommitCount: allCommits.length,
     repoMetrics,
+    insights,
     objects: rows,
     commits: commitRows.reverse(),
     fileMetrics: fileMetricRows.reverse(),
