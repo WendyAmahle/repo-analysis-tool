@@ -15,12 +15,13 @@
 - Filters by repository, author, file/directory, time period, and selected commits.
 - Binary file exclusion and rename detection with a 50% threshold.
 
-## Basic first version scope
+## Implementation status
 
-Implemented first:
+Implemented:
 
 - Clone a public remote Git repository URL.
-- Store and switch between multiple cloned repositories.
+- Upload a ZIP containing one repository and its `.git` directory, with archive safety and size limits.
+- Store and switch between multiple cloned or uploaded repositories.
 - Analyze non-merge commits reachable from `HEAD` or a user-provided reference commit.
 - Normalize authors through Git `.mailmap` using `git check-mailmap`.
 - Merge authors manually using dashboard merge rules when `.mailmap` is not enough.
@@ -29,8 +30,7 @@ Implemented first:
 - Calculate file, directory, repository, commit-set, and author metrics.
 - Filter by author, path, date range, reference commit, and manually entered commit hashes.
 
-Deferred:
+Not currently implemented:
 
-- ZIP upload and extraction.
 - Persistent database/cache for large repositories.
 - Charts and export views.
