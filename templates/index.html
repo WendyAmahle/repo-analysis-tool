@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block content %}
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  {% if message %}<p class="success">{{ message }}</p>{% endif %}
+
+  <section class="card">
+    <h2>Add repository</h2>
+    <p class="muted">Basic baseline: clone a public remote Git URL and analyze its non-merge commits.</p>
+    <form method="post">
+      <div class="grid">
+        <div>
+          <label for="repo_url">Repository URL</label>
+          <input id="repo_url" name="repo_url" placeholder="https://github.com/DaveGamble/cJSON.git" required>
+        </div>
+        <div>
+          <label for="repo_name">Local name, optional</label>
+          <input id="repo_name" name="repo_name" placeholder="cJSON">
+        </div>
+        <div style="align-self:end">
+          <button type="submit">Clone and analyze</button>
+        </div>
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Repositories</h2>
+    {% if repos %}
+      <ul>
+        {% for repo in repos %}
+          <li><a href="{{ url_for('dashboard', repo=repo) }}">{{ repo }}</a></li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted">No repositories cloned yet.</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Required features from the brief</h2>
+    <ul>
+      <li>Accept repositories by ZIP upload with <code>.git</code> and by remote URL clone.</li>
+      <li>Support multiple repositories in one dashboard.</li>
+      <li>Merge author identities using <code>.mailmap</code>; allow manual merging if missing.</li>
+      <li>Calculate file, directory, repository, commit-set, and author metrics.</li>
+      <li>Filter by repository, author, file/directory path, time period, or selected commits.</li>
+      <li>Ignore binary files and use rename detection at 50%.</li>
+    </ul>
+    <p class="muted">This first baseline implements remote URL clone, multiple saved repositories, .mailmap author normalization, file/directory/repository/commit-set/author metrics, and the main filters. ZIP upload and manual author merging are intentionally left for the next iteration.</p>
+  </section>
+{% endblock %}
