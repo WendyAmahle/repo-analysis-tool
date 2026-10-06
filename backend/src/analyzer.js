@@ -385,10 +385,26 @@ function filterCommits(commits, filters) {
     : [];
   return commits.filter((commit) => {
     if (since !== null && commit.timestamp < since) return false;
-    if (until !== null && commit.timestamp >= until) return false;
+    if (until !== null && commit.timestamp >= until + 24 * 60 * 60) return false;
     if (selected.length && !selected.some((sha) => commit.sha.startsWith(sha))) return false;
+    if (filters.author && commit.author !== filters.author) return false;
     return true;
   });
+}
+
+function filterChangesByPath(commits, pathFilter = '') {
+  const query = pathFilter.trim().replaceAll('\\', '/').toLowerCase();
+  if (!query) return commits;
+  return commits
+    .map((commit) => ({
+      ...commit,
+      changes: commit.changes.filter((change) => {
+        const currentPath = change.path.toLowerCase();
+        const previousPath = change.previousPath?.toLowerCase() || '';
+        return currentPath.includes(query) || previousPath.includes(query);
+      })
+    }))
+    .filter((commit) => commit.changes.length > 0);
 }
 
 function emptyMetrics(type) {
@@ -429,15 +445,18 @@ function addObjectPath(objectMetrics, filePath) {
   }
 }
 
-async function addCommitSetObjects(repoPath, commits, objectMetrics) {
+async function addCommitSetObjects(repoPath, commits, objectMetrics, pathFilter = '') {
   if (commits.length) {
     const firstCommit = commits[0];
     const lastCommit = commits[commits.length - 1];
     const firstParent = await previousCommit(repoPath, firstCommit.sha);
     const references = [...new Set([firstParent, firstCommit.sha, lastCommit.sha].filter(Boolean))];
     const snapshots = await Promise.all(references.map((reference) => listFilesAtReference(repoPath, reference)));
+    const query = pathFilter.trim().replaceAll('\\', '/').toLowerCase();
     for (const files of snapshots) {
-      for (const filePath of files) addObjectPath(objectMetrics, filePath);
+      for (const filePath of files) {
+        if (!query || filePath.toLowerCase().includes(query)) addObjectPath(objectMetrics, filePath);
+      }
     }
   }
   ensureMetric(objectMetrics, '.', 'directory');
@@ -447,7 +466,7 @@ export async function analyzeRepository(repoPath, filters = {}) {
   const manualAuthorMap = parseManualAuthorMerges(filters.authorMerges || '');
   const reference = await resolveReference(repoPath, filters.reference || 'HEAD');
   const allCommits = await parseHistory(repoPath, reference, manualAuthorMap);
-  const commits = filterCommits(allCommits, filters);
+  const commits = filterChangesByPath(filterCommits(allCommits, filters), filters.path);
   const objectMetrics = new Map();
   const objectAuthors = new Map();
   const authors = [...new Set(allCommits.map((commit) => commit.author))].sort();
@@ -455,7 +474,7 @@ export async function analyzeRepository(repoPath, filters = {}) {
   const fileMetricRows = [];
   const directoryMetricRows = [];
 
-  await addCommitSetObjects(repoPath, commits, objectMetrics);
+  await addCommitSetObjects(repoPath, commits, objectMetrics, filters.path);
 
   for (const commit of commits) {
     const changes = commit.changes;
@@ -543,7 +562,6 @@ export async function analyzeRepository(repoPath, filters = {}) {
   const commitCount = commits.length;
   const rows = [];
   for (const [objectPath, metric] of objectMetrics.entries()) {
-    if (filters.path && !objectPath.toLowerCase().includes(filters.path.toLowerCase())) continue;
     if (!['file', 'directory'].includes(metric.type)) continue;
     metric.modificationFrequency = commitCount ? metric.modifications / commitCount : 0;
     metric.churnRate = commitCount ? metric.churn / commitCount : 0;
